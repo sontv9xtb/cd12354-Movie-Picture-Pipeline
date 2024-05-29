@@ -1,0 +1,103 @@
+name: Backend  Deployment
+
+on:
+  workflow_dispatch:
+      
+  pull_request:
+    branches:
+      - main
+env:
+  AWS_REGION: us-east-1
+
+jobs:
+  lint-job:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        run: cd starter/backend && pip install pipenv
+
+      - name: Cache Python Dependencies
+        uses: actions/cache@v3
+        with:
+          path: ~/.local/share/virtualenvs
+          key: deps-python-${{ hashFiles('**/Pipfile.lock') }}
+
+      - name: Install Project Dependencies
+        run: cd starter/backend && pipenv install --dev
+
+      - name: Python Linter
+        run: cd starter/backend && pipenv run lint
+
+  test-job:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        run: cd starter/backend && pip install pipenv
+
+      - name: Cache Python Dependencies
+        uses: actions/cache@v3
+        with:
+          path: ~/.local/share/virtualenvs
+          key: deps-python-${{ hashFiles('**/Pipfile.lock') }}
+
+      - name: Install dependencies
+        run: cd starter/backend && pipenv install --dev
+
+      - name: Test with pytest
+        run: cd starter/backend && pipenv run test
+        continue-on-error: false
+
+  build-deploy:
+    needs: [lint-job, test-job]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        run: cd starter/backend && pip install pipenv
+
+      - name: Install dependencies
+        run: cd starter/backend && pipenv install --dev
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v3
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }} 
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }} 
+          aws-session-token: ${{secrets.AWS_SESSION_TOKEN}}
+          aws-region: ${{ env.AWS_REGION }}
+      
+      - name: Logging into  ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and Pushes the docker image to ECR
+        run:  |
+          cd starter/backend
+          docker build --tag backend:latest .
+          docker tag backend:latest ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.us-east-1.amazonaws.com/backend:latest
+          docker push ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.us-east-1.amazonaws.com/backend:latest
+
+      - name: Kubeconfig Auth
+        working-directory: starter/frontend/k8s
+        run: |
+          aws eks update-kubeconfig --name cluster --region us-east-1
+          
+      - name: Deploys the application using kubectl to the eks cluster
+        run:  |
+          cd starter/backend/k8s
+          kustomize edit set image backend=${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.us-east-1.amazonaws.com/backend:latest
+          kustomize build | kubectl apply -f -
+       
