@@ -1,0 +1,108 @@
+name: Frontend Deployment
+
+on:
+  workflow_dispatch:
+      
+  pull_request:
+    branches:
+      - main
+env:
+  REACT_APP_MOVIE_API_URL: Hello SonTV9!! 
+  AWS_REGION: us-east-1
+
+jobs:
+  lint-job:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up node 
+        uses: actions/setup-node@v3
+        with:
+          node-version: latest
+
+      - name: Cache Python Dependencies
+        uses: actions/cache@v3
+        with:
+          path: ~/.npm
+          key: ${{ runner.os }}-node-${{ hashFiles('**/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-node-
+
+      - name: Install dependencies
+        run: cd starter/frontend && npm install
+
+      - name: Run the npm run lint
+        run: cd starter/frontend && npm run lint
+        continue-on-error: false
+
+  test-job:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up node
+        uses: actions/setup-node@v3
+        with:
+          node-version: latest
+
+      - name: Cache Python Dependencies
+        uses: actions/cache@v3
+        with:
+          path: ~/.npm
+          key: ${{ runner.os }}-node-${{ hashFiles('**/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-node-
+
+      - name: Install dependencies
+        run: cd starter/frontend && npm install
+
+      - name: Run tests
+        run: cd starter/frontend && npm run test
+        continue-on-error: false
+
+  build-deploy:
+    needs: [lint-job, test-job]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up node
+        uses: actions/setup-node@v3
+        with:
+          node-version: latest
+
+      - name: Install dependencies
+        run: cd starter/frontend && npm install
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v3
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }} 
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }} 
+          aws-session-token: ${{secrets.AWS_SESSION_TOKEN}}
+          aws-region: ${{ env.AWS_REGION }}
+      - name: Logging into  ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and Pushes the docker image to ECR
+        run:  |
+          cd starter/frontend 
+          docker build --build-arg=REACT_APP_MOVIE_API_URL=http://a553c268af83d4f109fe488832f8f5a1-1742493035.us-east-1.elb.amazonaws.com --tag=frontend:latest .
+          docker tag frontend:latest ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.us-east-1.amazonaws.com/frontend:latest
+          docker push ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.us-east-1.amazonaws.com/frontend:latest
+
+      - name: Kubeconfig Auth
+        working-directory: starter/frontend/k8s
+        run: |
+          aws eks update-kubeconfig --name cluster --region us-east-1
+          
+      - name: Deploys the application using kubectl to the eks cluster
+        run:  |
+          cd starter/frontend/k8s
+          kustomize edit set image frontend=${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.us-east-1.amazonaws.com/frontend:latest
+          kustomize build | kubectl apply -f -
+       
