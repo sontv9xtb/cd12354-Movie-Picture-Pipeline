@@ -111,9 +111,11 @@ jobs:
           kubectl config view
         working-directory: setup
 
-      - name: Deploys the application using kubectl to the eks cluster
-        run:  |
-          cd starter/backend/k8s
+      - name: Deploy the image to the cluster
+        env:
+          REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        run: |
+          cd k8s
           kustomize edit set image backend=${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.us-east-1.amazonaws.com/backend:latest
           kustomize build | kubectl apply -f -
        
